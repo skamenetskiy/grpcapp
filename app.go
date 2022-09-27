@@ -167,9 +167,9 @@ func (opt *grpcServerOptionsOption) option(a *app) {
 	a.grpcServerOptions = opt.options
 }
 
-func WithDatabase(dsn interface{ string | *pgx.Conn }) Option {
+func WithDatabase[T string | *pgx.Conn](db T) Option {
 	opt := new(databaseOption)
-	switch v := dsn.(type) {
+	switch v := any(db).(type) {
 	case string:
 		opt.dsn = v
 	case *pgx.Conn:
