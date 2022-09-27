@@ -30,6 +30,10 @@ type Tools interface {
 	Log() *zap.Logger
 }
 
+func Listen(options ...Option) {
+	New(options...).Listen()
+}
+
 func New(options ...Option) App {
 	a := new(app)
 	for _, o := range options {
@@ -167,9 +171,13 @@ func (opt *grpcServerOptionsOption) option(a *app) {
 	a.grpcServerOptions = opt.options
 }
 
-func WithDatabase[T string | *pgx.Conn](db T) Option {
+func WithDatabase[T string | *pgx.Conn](db ...T) Option {
+	var conn T
+	if len(db) == 1 {
+		conn = db[0]
+	}
 	opt := new(databaseOption)
-	switch v := any(db).(type) {
+	switch v := any(conn).(type) {
 	case string:
 		opt.dsn = v
 	case *pgx.Conn:
