@@ -1,3 +1,2 @@
-# grpcapp
-
+# grpcapp [![Go](https://github.com/skamenetskiy/grpcapp/actions/workflows/go.yml/badge.svg)](https://github.com/skamenetskiy/grpcapp/actions/workflows/go.yml) [![GoDoc](https://godoc.org/github.com/skamenetskiy/grpcapp?status.svg)](http://godoc.org/github.com/skamenetskiy/grpcapp) [![Go Report](https://goreportcard.com/badge/github.com/skamenetskiy/grpcapp)](https://goreportcard.com/report/github.com/skamenetskiy/grpcapp)
 A simple wrapper for gRPC microservices.
