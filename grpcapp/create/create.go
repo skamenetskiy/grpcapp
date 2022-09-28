@@ -29,7 +29,7 @@ func Run(args []string) {
 		h.Mkdir(name)
 	}
 	goModData := fmt.Sprintf("module %s\n\ngo 1.19\n\nrequire (\n\t"+
-		"github.com/skamenetskiy/grpcapp v0.0.0-20220927150441-ce3a333817c0\n)", name)
+		"github.com/skamenetskiy/grpcapp v0.0.2\n)", name)
 	if err := os.WriteFile(filepath.Join(name, "go.mod"), []byte(goModData), filePerm); err != nil {
 		h.Die("failed to write go.mod: %s", err)
 	}
