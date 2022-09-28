@@ -13,27 +13,33 @@ import (
 	"google.golang.org/grpc"
 )
 
+// App interface.
 type App interface {
 	Listen()
 }
 
+// Option interface.
 type Option interface {
 	option(*app)
 }
 
+// Implementation interface.
 type Implementation interface {
 	UseTools(Tools)
 }
 
+// Tools interface.
 type Tools interface {
 	DB() *pgx.Conn
 	Log() *zap.Logger
 }
 
+// Listen shortcut.
 func Listen(options ...Option) {
 	New(options...).Listen()
 }
 
+// New app generator.
 func New(options ...Option) App {
 	a := new(app)
 	for _, o := range options {

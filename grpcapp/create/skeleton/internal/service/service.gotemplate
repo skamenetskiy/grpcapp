@@ -1,13 +1,25 @@
 package service
 
 import (
+	"context"
+
 	"github.com/skamenetskiy/grpcapp"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"{{.Name}}/pkg"
 )
 
 type Service struct {
+	pkg.UnimplementedGreeterServer
+
 	tools grpcapp.Tools
 }
 
 func (svc *Service) UseTools(tools grpcapp.Tools) {
 	svc.tools = tools
+}
+
+func (svc *Service) Hello(ctx context.Context, req *pkg.HelloRequest) (*pkg.HelloResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not implemented")
 }
