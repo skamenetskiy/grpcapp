@@ -25,12 +25,6 @@ const (
 	protocVersion = "21.6"
 )
 
-func generate(_ []string) {
-	if err := generateProto(); err != nil {
-		h.Die("failed to generate proto: %s", err)
-	}
-}
-
 func generateProto() error {
 	detectedOs := getOS()
 	wd, err := os.Getwd()
