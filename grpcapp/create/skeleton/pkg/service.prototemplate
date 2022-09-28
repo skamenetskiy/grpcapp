@@ -1,6 +1,6 @@
 syntax = "proto3";
 package pkg;
-option go_package = "sample/pkg";
+option go_package = "{{.Name}}/pkg";
 
 service Greeter {
   rpc Hello(HelloRequest) returns (HelloResponse);

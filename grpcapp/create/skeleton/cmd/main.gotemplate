@@ -1,8 +1,8 @@
 package main
 
 import (
-	"sample/internal/service"
-	"sample/pkg"
+	"{{.Name}}/internal/service"
+	"{{.Name}}/pkg"
 
 	"github.com/skamenetskiy/grpcapp"
 )
