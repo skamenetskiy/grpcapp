@@ -33,6 +33,10 @@ func Run(args []string) {
 	if err := os.WriteFile(filepath.Join(name, "go.mod"), []byte(goModData), filePerm); err != nil {
 		h.Die("failed to write go.mod: %s", err)
 	}
+	gitIgnoreData := ".idea\n.vscode\n.proto\n"
+	if err := os.WriteFile(filepath.Join(name, ".gitignore"), []byte(gitIgnoreData), filePerm); err != nil {
+		h.Die("failed to write .gitignore: %s", err)
+	}
 	if err := extract(name); err != nil {
 		h.Die("failed to extract application files: %s", err)
 	}
