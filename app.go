@@ -49,13 +49,12 @@ func New(options ...Option) App {
 }
 
 type app struct {
-	dsn                   string
-	dbConn                *pgx.Conn
-	log                   *zap.Logger
-	serviceDescription    *grpc.ServiceDesc
-	serviceImplementation Implementation
-	listenPort            int
-	grpcServerOptions     []grpc.ServerOption
+	dsn                    string
+	dbConn                 *pgx.Conn
+	log                    *zap.Logger
+	serviceImplementations []serviceImplementation
+	listenPort             int
+	grpcServerOptions      []grpc.ServerOption
 }
 
 func (a *app) Listen() {
@@ -100,9 +99,13 @@ func (a *app) Listen() {
 		a.log.Fatal("failed to listen", zap.Error(err))
 	}
 	srv := grpc.NewServer(a.grpcServerOptions...)
-	if a.serviceDescription != nil {
-		a.serviceImplementation.UseTools(t)
-		srv.RegisterService(a.serviceDescription, a.serviceImplementation)
+	if len(a.serviceImplementations) > 0 {
+		for _, si := range a.serviceImplementations {
+			desc, impl := si.desc, si.impl
+			a.log.Info("service registration", zap.String("serviceName", desc.ServiceName))
+			impl.UseTools(t)
+			srv.RegisterService(desc, impl)
+		}
 	}
 	ch := make(chan os.Signal)
 	signal.Notify(ch, os.Interrupt, os.Kill)
@@ -160,9 +163,16 @@ type serviceImplementationOption struct {
 	impl Implementation
 }
 
+type serviceImplementation struct {
+	desc *grpc.ServiceDesc
+	impl Implementation
+}
+
 func (opt *serviceImplementationOption) option(a *app) {
-	a.serviceDescription = opt.desc
-	a.serviceImplementation = opt.impl
+	a.serviceImplementations = append(a.serviceImplementations, serviceImplementation{
+		desc: opt.desc,
+		impl: opt.impl,
+	})
 }
 
 func WithGrpcServerOptions(options ...grpc.ServerOption) Option {
