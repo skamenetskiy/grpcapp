@@ -8,6 +8,26 @@ A simple wrapper for gRPC microservices.
 - Tiny and elegant.
 - Includes exactly what's required.
 
+## CLI Tool
+
+To install the `grpcapp` cli tool run:
+```
+go install github.com/skamenetskiy/grpcapp/grpcapp@v0.0.3
+```
+
+For more help run: 
+```
+grpcapp help
+```
+```
+usage: grpcapp {command} [...options]
+
+commands:
+	create {name} - create new application
+	generate      - generate proto
+	help          - print help information
+```
+
 ## License
 
 The grpcapp package is open-sourced software licensed under the [MIT license](LICENSE).
