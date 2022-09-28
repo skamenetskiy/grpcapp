@@ -1,14 +1,15 @@
 package main
 
 import (
+	"github.com/skamenetskiy/grpcapp"
+
 	"{{.Name}}/internal/service"
 	"{{.Name}}/pkg"
-
-	"github.com/skamenetskiy/grpcapp"
 )
 
+// entry point
 func main() {
-	grpcapp.Listen(
+	grpcapp.Start(
 		grpcapp.WithServiceImplementation(&pkg.Greeter_ServiceDesc, new(service.Service)),
 	)
 }
