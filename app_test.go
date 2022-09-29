@@ -790,8 +790,8 @@ func Test_tools_Log(t1 *testing.T) {
 				log: tt.fields.log,
 				db:  tt.fields.db,
 			}
-			if got := t.Log(); !reflect.DeepEqual(got, tt.want) {
-				t1.Errorf("Log() = %v, want %v", got, tt.want)
+			if got := t.Logger(); !reflect.DeepEqual(got, tt.want) {
+				t1.Errorf("Logger() = %v, want %v", got, tt.want)
 			}
 		})
 	}

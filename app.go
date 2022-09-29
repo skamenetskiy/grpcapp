@@ -9,18 +9,23 @@ import (
 	"os/signal"
 
 	"github.com/caarlos0/env/v6"
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-	grpc_zap "github.com/grpc-ecosystem/go-grpc-middleware/logging/zap"
-	grpc_ctxtags "github.com/grpc-ecosystem/go-grpc-middleware/tags"
+	"github.com/golang-jwt/jwt"
+	grpcMiddleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpcZap "github.com/grpc-ecosystem/go-grpc-middleware/logging/zap"
+	grpcCtxTags "github.com/grpc-ecosystem/go-grpc-middleware/tags"
 	"github.com/jackc/pgx/v4"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // App interface.
 type App interface {
+
+	// Start the application.
 	Start()
 }
 
@@ -31,27 +36,53 @@ type Option interface {
 
 // Implementation interface.
 type Implementation interface {
+
+	// UseTools within service implementation.
 	UseTools(Tools)
 }
 
 // Tools interface.
 type Tools interface {
+
+	// Config provided on application init.
 	Config() *Config
+
+	// DB connection if initialized or nil.
 	DB() *pgx.Conn
-	Log() *zap.Logger
+
+	// Logger if provided of application init or nil.
+	Logger() *zap.Logger
+
+	// JwtToken from context or nil.
+	JwtToken(ctx context.Context) *jwt.Token
+
+	// JwtClaims from context or nil.
+	JwtClaims(ctx context.Context) jwt.MapClaims
 }
 
 // Config of the application.
 type Config struct {
-	DatabaseDSN    string `env:"DATABASE_DSN"`
-	LogLevel       string `env:"LOG_LEVEL" envDefault:"info"`
-	GrpcListenPort int    `env:"GRPC_LISTEN_PORT" envDefault:"9000"`
-	HttpListenPort int    `env:"HTTP_LISTEN_PORT" envDefault:"8080"`
+
+	// DatabaseDSN from env.
+	DatabaseDSN string `env:"DATABASE_DSN"`
+
+	// LogLevel from env (default "info").
+	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
+
+	// GrpcListenPort from environment (default 9000).
+	GrpcListenPort int `env:"GRPC_LISTEN_PORT" envDefault:"9000"`
+
+	// HttpListenPort from environment (default 8080).
+	HttpListenPort int `env:"HTTP_LISTEN_PORT" envDefault:"8080"`
+
+	// TLSCertificate file from environment.
 	TLSCertificate string `env:"TLS_CERTIFICATE"`
-	TLSKey         string `env:"TLS_KEY"`
+
+	// TLSKey file from environment.
+	TLSKey string `env:"TLS_KEY"`
 }
 
-// Start shortcut to New().Listen().
+// Start shortcut to New().Start().
 func Start(options ...Option) {
 	New(options...).Start()
 }
@@ -68,9 +99,16 @@ func New(options ...Option) App {
 	return a
 }
 
+const (
+	// TokenContextKey defined value key of JWT token within context.
+	TokenContextKey = "jwt_token"
+)
+
 type app struct {
 	serviceImplementations []serviceImplementation
 	serverOptions          []grpc.ServerOption
+	unaryInterceptors      []grpc.UnaryServerInterceptor
+	streamInterceptors     []grpc.StreamServerInterceptor
 	tools                  *tools
 	serveHttp              bool
 	grpcServer             *grpc.Server
@@ -161,8 +199,8 @@ func (a *app) initDatabase() {
 
 func (a *app) initServers() {
 	if a.grpcServer == nil {
-		opts := []grpc_zap.Option{
-			grpc_zap.WithLevels(func(code codes.Code) zapcore.Level {
+		opts := []grpcZap.Option{
+			grpcZap.WithLevels(func(code codes.Code) zapcore.Level {
 				switch code {
 				case codes.OK:
 					return zapcore.DebugLevel
@@ -201,17 +239,23 @@ func (a *app) initServers() {
 				}
 				return zapcore.ErrorLevel
 			}),
-			//grpc_zap.WithLevels(customFunc),
+		}
+		unaryInterceptors := append([]grpc.UnaryServerInterceptor{
+			grpcCtxTags.UnaryServerInterceptor(grpcCtxTags.WithFieldExtractor(grpcCtxTags.CodeGenRequestFieldExtractor)),
+			grpcZap.UnaryServerInterceptor(a.tools.log, opts...),
+		}, a.unaryInterceptors...)
+		streamInterceptors := append([]grpc.StreamServerInterceptor{
+			grpcCtxTags.StreamServerInterceptor(grpcCtxTags.WithFieldExtractor(grpcCtxTags.CodeGenRequestFieldExtractor)),
+			grpcZap.StreamServerInterceptor(a.tools.log, opts...),
+		}, a.streamInterceptors...)
+		if a.tools.jwt.keyFunc != nil {
+			ui, si := makeJwtInterceptors(a.tools)
+			unaryInterceptors = append(unaryInterceptors, ui)
+			streamInterceptors = append(streamInterceptors, si)
 		}
 		a.serverOptions = append(a.serverOptions,
-			grpc_middleware.WithUnaryServerChain(
-				grpc_ctxtags.UnaryServerInterceptor(grpc_ctxtags.WithFieldExtractor(grpc_ctxtags.CodeGenRequestFieldExtractor)),
-				grpc_zap.UnaryServerInterceptor(a.tools.log, opts...),
-			),
-			grpc_middleware.WithStreamServerChain(
-				grpc_ctxtags.StreamServerInterceptor(grpc_ctxtags.WithFieldExtractor(grpc_ctxtags.CodeGenRequestFieldExtractor)),
-				grpc_zap.StreamServerInterceptor(a.tools.log, opts...),
-			),
+			grpcMiddleware.WithUnaryServerChain(unaryInterceptors...),
+			grpcMiddleware.WithStreamServerChain(streamInterceptors...),
 		)
 		a.grpcServer = grpc.NewServer(a.serverOptions...)
 	}
@@ -296,20 +340,46 @@ type tools struct {
 	cfg *Config
 	log *zap.Logger
 	db  *pgx.Conn
+	jwt *jwtData
 }
 
+// Config provided on application init.
 func (t *tools) Config() *Config {
 	return t.cfg
 }
 
+// DB connection if initialized or nil.
 func (t *tools) DB() *pgx.Conn {
 	return t.db
 }
 
-func (t *tools) Log() *zap.Logger {
+// Logger if provided of application init or nil.
+func (t *tools) Logger() *zap.Logger {
 	return t.log
 }
 
+// JwtToken from context or nil.
+func (t *tools) JwtToken(ctx context.Context) *jwt.Token {
+	token := ctx.Value(TokenContextKey)
+	if token != nil {
+		if v, ok := token.(*jwt.Token); ok {
+			return v
+		}
+	}
+	return nil
+}
+
+// JwtClaims from context or nil.
+func (t *tools) JwtClaims(ctx context.Context) jwt.MapClaims {
+	if token := t.JwtToken(ctx); token != nil {
+		if claims, ok := token.Claims.(jwt.MapClaims); ok {
+			return claims
+		}
+	}
+	return nil
+}
+
+// WithConfig replaces the default Config. Environment variables will not be parsed.
 func WithConfig(cfg *Config) Option {
 	return &configOption{cfg}
 }
@@ -322,6 +392,7 @@ func (opt *configOption) option(a *app) {
 	a.tools.cfg = opt.cfg
 }
 
+// WithLogger replaces the default logger.
 func WithLogger(log *zap.Logger) Option {
 	return &loggerOption{log}
 }
@@ -332,6 +403,8 @@ func (opt *loggerOption) option(a *app) {
 	a.tools.log = opt.log
 }
 
+// WithServiceImplementation appends service implementation to grpc.Server, regardless
+// if WithGrpcServer options was used or not.
 func WithServiceImplementation(desc *grpc.ServiceDesc, impl Implementation) Option {
 	return &serviceImplementationOption{desc, impl}
 }
@@ -353,6 +426,7 @@ func (opt *serviceImplementationOption) option(a *app) {
 	})
 }
 
+// WithGrpcServerOptions appends grpc.ServerOption to default gRPC server.
 func WithGrpcServerOptions(options ...grpc.ServerOption) Option {
 	return &grpcServerOptionsOption{options}
 }
@@ -365,6 +439,8 @@ func (opt *grpcServerOptionsOption) option(a *app) {
 	a.serverOptions = opt.options
 }
 
+// WithDatabase replaces the default database connection. If used - the app will not
+// try to connect using DatabaseDSN provided in Config.
 func WithDatabase(db *pgx.Conn) Option {
 	return &databaseOption{db}
 }
@@ -377,6 +453,8 @@ func (opt *databaseOption) option(a *app) {
 	a.tools.db = opt.db
 }
 
+// WithHTTP option enables http server to listen in addition to gRPC server.
+// When enabled TLSCertificate and TLSKey in Config must be provided.
 func WithHTTP() Option {
 	return new(httpOption)
 }
@@ -387,6 +465,9 @@ func (*httpOption) option(a *app) {
 	a.serveHttp = true
 }
 
+// WithGrpcServer replaces the default grpc.Server in app by the one provided
+// in arguments. When used, all gRPC server related options will be ignored,
+// like WithJwtAuthentication, WithGrpcServerOptions, WithUnaryInterceptor etc.
 func WithGrpcServer(srv *grpc.Server) Option {
 	return &grpcServerOption{srv}
 }
@@ -399,6 +480,8 @@ func (opt *grpcServerOption) option(a *app) {
 	a.grpcServer = opt.srv
 }
 
+// WithHttpServer replaces the default http.Server. Must be used together
+// with WithHTTP option, otherwise will be ignored.
 func WithHttpServer(srv *http.Server) Option {
 	return &httpServerOption{srv}
 }
@@ -409,4 +492,164 @@ type httpServerOption struct {
 
 func (opt *httpServerOption) option(a *app) {
 	a.httpServer = opt.srv
+}
+
+// WithJwtAuthentication enables JWT authentication for provided methods. If not methods
+// provided, the authentication will be enabled for all requests.
+func WithJwtAuthentication(keyFunc jwt.Keyfunc, methods ...string) Option {
+	return &jwtAuthOption{keyFunc, methods}
+}
+
+type jwtAuthOption struct {
+	keyFunc jwt.Keyfunc
+	methods []string
+}
+
+func (opt *jwtAuthOption) option(a *app) {
+	a.tools.jwt = &jwtData{opt.keyFunc, opt.methods}
+}
+
+type jwtData struct {
+	keyFunc jwt.Keyfunc
+	methods []string
+}
+
+func makeJwtInterceptors(t *tools) (
+	grpc.UnaryServerInterceptor,
+	grpc.StreamServerInterceptor,
+) {
+	const (
+		authHeader  = "authorization"
+		tokenHeader = TokenContextKey
+	)
+
+	errUnauthorized := status.Error(codes.Unauthenticated, "unauthenticated")
+	checkMethods := len(t.jwt.methods) > 0
+	useMethods := make(map[string]struct{}, len(t.jwt.methods))
+
+	for _, method := range t.jwt.methods {
+		useMethods[method] = struct{}{}
+	}
+
+	getToken := func(ctx context.Context) (*jwt.Token, error) {
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			t.log.Debug("failed to extract metadata from context")
+			return nil, errUnauthorized
+		}
+		values := md[authHeader]
+		if len(values) == 0 {
+			t.log.Debug("authorization token not found in metadata",
+				zap.Any("md", md))
+			return nil, errUnauthorized
+		}
+		token, err := jwt.Parse(values[0], t.jwt.keyFunc)
+		if err != nil {
+			t.log.Warn("failed to validate token",
+				zap.Error(err),
+				zap.Any("md", md))
+			return nil, errUnauthorized
+		}
+		return token, nil
+	}
+
+	unaryInterceptor := func(
+		ctx context.Context,
+		req any,
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (any, error) {
+		if checkMethods {
+			if _, ok := useMethods[info.FullMethod]; !ok {
+				return handler(ctx, req)
+			}
+		}
+		token, err := getToken(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return handler(context.WithValue(ctx, tokenHeader, token), req)
+	}
+
+	streamInterceptor := func(
+		srv any,
+		stream grpc.ServerStream,
+		info *grpc.StreamServerInfo,
+		handler grpc.StreamHandler,
+	) error {
+		if checkMethods {
+			if _, ok := useMethods[info.FullMethod]; !ok {
+				return handler(srv, stream)
+			}
+		}
+		token, err := getToken(stream.Context())
+		if err != nil {
+			return err
+		}
+		return handler(srv, &grpcStreamWrapper{
+			ctx:    context.WithValue(stream.Context(), tokenHeader, token),
+			stream: stream,
+		})
+	}
+
+	return unaryInterceptor, streamInterceptor
+}
+
+type grpcStreamWrapper struct {
+	ctx    context.Context
+	stream grpc.ServerStream
+}
+
+func (sw *grpcStreamWrapper) SetHeader(md metadata.MD) error {
+	return sw.stream.SetHeader(md)
+}
+
+func (sw *grpcStreamWrapper) SendHeader(md metadata.MD) error {
+	return sw.stream.SendHeader(md)
+}
+
+func (sw *grpcStreamWrapper) SetTrailer(md metadata.MD) {
+	sw.stream.SetTrailer(md)
+}
+
+func (sw *grpcStreamWrapper) Context() context.Context {
+	return sw.ctx
+}
+
+func (sw *grpcStreamWrapper) SendMsg(m any) error {
+	return sw.stream.SendMsg(m)
+}
+
+func (sw *grpcStreamWrapper) RecvMsg(m any) error {
+	return sw.stream.RecvMsg(m)
+}
+
+// WithUnaryInterceptor appends grpc.UnaryServerInterceptor using WithUnaryServerChain
+// middleware after Logger and JWT interceptors. This option is ignored if
+// WithGrpcServer option is used.
+func WithUnaryInterceptor(interceptor grpc.UnaryServerInterceptor) Option {
+	return &unaryInterceptorOption{interceptor}
+}
+
+type unaryInterceptorOption struct {
+	interceptor grpc.UnaryServerInterceptor
+}
+
+func (opt *unaryInterceptorOption) option(a *app) {
+	a.unaryInterceptors = append(a.unaryInterceptors, opt.interceptor)
+}
+
+// WithStreamInterceptor appends grpc.StreamServerInterceptor using WithStreamServerChain
+// middleware after Logger and JWT interceptors. This option is ignored if
+// WithGrpcServer option is used.
+func WithStreamInterceptor(interceptor grpc.StreamServerInterceptor) Option {
+	return &streamInterceptorOption{interceptor}
+}
+
+type streamInterceptorOption struct {
+	interceptor grpc.StreamServerInterceptor
+}
+
+func (opt *streamInterceptorOption) option(a *app) {
+	a.streamInterceptors = append(a.streamInterceptors, opt.interceptor)
 }
