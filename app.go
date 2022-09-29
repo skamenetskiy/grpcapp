@@ -27,6 +27,15 @@ type App interface {
 
 	// Start the application.
 	Start()
+
+	// Tools returns Tools.
+	Tools() Tools
+
+	// GrpcServer returns gRPC server.
+	GrpcServer() *grpc.Server
+
+	// HttpServer return HTTP server.
+	HttpServer() *http.Server
 }
 
 // Option interface.
@@ -82,6 +91,8 @@ type Config struct {
 	TLSKey string `env:"TLS_KEY"`
 }
 
+type StartHook func(App) error
+
 // Start shortcut to New().Start().
 func Start(options ...Option) {
 	New(options...).Start()
@@ -113,6 +124,7 @@ type app struct {
 	serveHttp              bool
 	grpcServer             *grpc.Server
 	httpServer             *http.Server
+	startHooks             []StartHook
 	done                   chan struct{}
 	shutdownCh             chan os.Signal
 }
@@ -144,6 +156,18 @@ func (a *app) Start() {
 
 	// wait
 	<-a.done
+}
+
+func (a *app) Tools() Tools {
+	return a.tools
+}
+
+func (a *app) GrpcServer() *grpc.Server {
+	return a.grpcServer
+}
+
+func (a *app) HttpServer() *http.Server {
+	return a.httpServer
 }
 
 func (a *app) initConfig() {
@@ -188,7 +212,7 @@ func (a *app) initServiceImplementations() {
 }
 
 func (a *app) initDatabase() {
-	if a.tools.cfg.DatabaseDSN != "" {
+	if a.tools.db == nil && a.tools.cfg.DatabaseDSN != "" {
 		var err error
 		a.tools.db, err = pgx.Connect(context.Background(), a.tools.cfg.DatabaseDSN)
 		if err != nil {
@@ -249,7 +273,7 @@ func (a *app) initServers() {
 			grpcCtxTags.StreamServerInterceptor(grpcCtxTags.WithFieldExtractor(grpcCtxTags.CodeGenRequestFieldExtractor)),
 			grpcZap.StreamServerInterceptor(a.tools.log, opts...),
 		}, a.streamInterceptors...)
-		if a.tools.jwt.keyFunc != nil {
+		if a.tools.jwt != nil && a.tools.jwt.keyFunc != nil {
 			ui, si := makeJwtInterceptors(a.tools)
 			unaryInterceptors = append(unaryInterceptors, ui)
 			streamInterceptors = append(streamInterceptors, si)
@@ -654,4 +678,19 @@ type streamInterceptorOption struct {
 
 func (opt *streamInterceptorOption) option(a *app) {
 	a.streamInterceptors = append(a.streamInterceptors, opt.interceptor)
+}
+
+// WithStartHook appends StartHook to run before application starts listening.
+func WithStartHook(hook StartHook) Option {
+	return &startHookOption{hook}
+}
+
+type startHookOption struct {
+	hook StartHook
+}
+
+func (opt *startHookOption) option(a *app) {
+	if opt.hook != nil {
+		a.startHooks = append(a.startHooks, opt.hook)
+	}
 }

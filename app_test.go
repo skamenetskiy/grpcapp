@@ -1,6 +1,7 @@
 package grpcapp
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -228,29 +229,31 @@ func TestWithServiceImplementation(t *testing.T) {
 
 func Test_app_Start(t *testing.T) {
 	type fields struct {
-		serviceImplementations []serviceImplementation
-		serverOptions          []grpc.ServerOption
-		tools                  *tools
-		serveHttp              bool
-		grpcServer             *grpc.Server
-		httpServer             *http.Server
+		tools *tools
+		//grpcServer             *grpc.Server
 	}
 	tests := []struct {
 		name   string
 		fields fields
 	}{
-		// TODO: Add test cases.
+		{"basic", fields{
+			&tools{
+				log: zap.NewNop(),
+				cfg: &Config{GrpcListenPort: 28800},
+			},
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := &app{
-				serviceImplementations: tt.fields.serviceImplementations,
-				serverOptions:          tt.fields.serverOptions,
-				tools:                  tt.fields.tools,
-				serveHttp:              tt.fields.serveHttp,
-				grpcServer:             tt.fields.grpcServer,
-				httpServer:             tt.fields.httpServer,
+				tools: tt.fields.tools,
+				done:  make(chan struct{}),
+				//grpcServer:             tt.fields.grpcServer,
 			}
+			go func() {
+				<-time.After(time.Second * 2)
+				a.shutdownCh <- os.Kill
+			}()
 			a.Start()
 		})
 	}
@@ -293,29 +296,20 @@ func Test_app_initConfig(t *testing.T) {
 }
 
 func Test_app_initDatabase(t *testing.T) {
+
 	type fields struct {
-		serviceImplementations []serviceImplementation
-		serverOptions          []grpc.ServerOption
-		tools                  *tools
-		serveHttp              bool
-		grpcServer             *grpc.Server
-		httpServer             *http.Server
+		tools *tools
 	}
 	tests := []struct {
-		name   string
-		fields fields
+		name  string
+		tools *tools
 	}{
-		// TODO: Add test cases.
+		{"with db", &tools{db: &pgx.Conn{}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := &app{
-				serviceImplementations: tt.fields.serviceImplementations,
-				serverOptions:          tt.fields.serverOptions,
-				tools:                  tt.fields.tools,
-				serveHttp:              tt.fields.serveHttp,
-				grpcServer:             tt.fields.grpcServer,
-				httpServer:             tt.fields.httpServer,
+				tools: tt.tools,
 			}
 			a.initDatabase()
 		})
@@ -931,6 +925,133 @@ func Test_tools_Log(t1 *testing.T) {
 			}
 			if got := t.Logger(); !reflect.DeepEqual(got, tt.want) {
 				t1.Errorf("Logger() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWithStartHook(t *testing.T) {
+	type args struct {
+		hook StartHook
+	}
+	nilHook := func(_ App) error { return nil }
+	errHook := func(_ App) error { return fmt.Errorf("err") }
+	tests := []struct {
+		name string
+		args args
+		want error
+	}{
+		{"one", args{nilHook}, nil},
+		{"one", args{errHook}, fmt.Errorf("err")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opt := WithStartHook(tt.args.hook).(*startHookOption)
+			got := opt.hook(nil)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("WithStartHook() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_startHookOption_option(t *testing.T) {
+	type fields struct {
+		hook StartHook
+	}
+	hook := func(_ App) error { return nil }
+	tests := []struct {
+		name   string
+		fields fields
+		want   []StartHook
+	}{
+		{"with start hook", fields{hook}, []StartHook{hook}},
+		{"without start hook", fields{}, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &app{}
+			opt := &startHookOption{
+				hook: tt.fields.hook,
+			}
+			opt.option(a)
+			if len(a.startHooks) != len(tt.want) {
+				t.Errorf("expected: %v, got %v", tt.want, a.startHooks)
+			}
+		})
+	}
+}
+
+func Test_app_Tools(t *testing.T) {
+	type fields struct {
+		tools *tools
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		want   Tools
+	}{
+		{"with tools", fields{&tools{}}, &tools{}},
+		{"with log", fields{&tools{log: zap.NewNop()}}, &tools{log: zap.NewNop()}},
+		//{"without tools", fields{}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &app{
+				tools: tt.fields.tools,
+			}
+			if got := a.Tools(); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Tools() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_app_GrpcServer(t *testing.T) {
+	type fields struct {
+		grpcServer *grpc.Server
+	}
+	s := grpc.NewServer()
+	tests := []struct {
+		name   string
+		fields fields
+		want   *grpc.Server
+	}{
+		{"with grpcServer", fields{s}, s},
+		{"without grpcServer", fields{}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &app{
+				grpcServer: tt.fields.grpcServer,
+			}
+			if got := a.GrpcServer(); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("GrpcServer() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_app_HttpServer(t *testing.T) {
+	type fields struct {
+		httpServer *http.Server
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		want   *http.Server
+	}{
+		{"with httpServer", fields{&http.Server{}}, &http.Server{}},
+		{"without httpServer", fields{}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &app{
+				httpServer: tt.fields.httpServer,
+			}
+			if got := a.HttpServer(); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("HttpServer() = %v, want %v", got, tt.want)
 			}
 		})
 	}
