@@ -3,15 +3,17 @@ module github.com/skamenetskiy/grpcapp
 go 1.19
 
 require (
+	github.com/caarlos0/env/v6 v6.10.1
+	github.com/golang-jwt/jwt v3.2.2+incompatible
+	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/jackc/pgx/v4 v4.17.2
 	go.uber.org/zap v1.23.0
 	google.golang.org/grpc v1.49.0
+	google.golang.org/protobuf v1.28.1
 )
 
 require (
-	github.com/caarlos0/env/v6 v6.10.1 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
-	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0 // indirect
 	github.com/jackc/chunkreader/v2 v2.0.1 // indirect
 	github.com/jackc/pgconn v1.13.0 // indirect
 	github.com/jackc/pgio v1.0.0 // indirect
@@ -26,5 +28,4 @@ require (
 	golang.org/x/sys v0.0.0-20220927170352-d9d178bc13c6 // indirect
 	golang.org/x/text v0.3.7 // indirect
 	google.golang.org/genproto v0.0.0-20220927151529-dcaddaf36704 // indirect
-	google.golang.org/protobuf v1.28.1 // indirect
 )
