@@ -114,6 +114,7 @@ type app struct {
 	grpcServer             *grpc.Server
 	httpServer             *http.Server
 	done                   chan struct{}
+	shutdownCh             chan os.Signal
 }
 
 func (a *app) Start() {
@@ -314,9 +315,9 @@ func (a *app) listenHttp() {
 
 func (a *app) shutdown() {
 	go func() {
-		ch := make(chan os.Signal)
-		signal.Notify(ch, os.Interrupt, os.Kill)
-		sig := <-ch
+		a.shutdownCh = make(chan os.Signal)
+		signal.Notify(a.shutdownCh, os.Interrupt, os.Kill)
+		sig := <-a.shutdownCh
 		a.tools.log.Info("graceful shutdown",
 			zap.String("signal", sig.String()))
 
@@ -333,6 +334,7 @@ func (a *app) shutdown() {
 			a.tools.log.Info("stopped http server")
 		}
 		a.done <- struct{}{}
+		close(a.done)
 	}()
 }
 
